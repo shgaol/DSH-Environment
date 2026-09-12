@@ -1,0 +1,5 @@
+// resources/app.rc
+// 应用图标：把 resources/app.ico 嵌入生成的 exe，
+// 使资源管理器中显示的 exe 图标 = 窗口图标（蓝色圆角方块 + 白色 D）。
+// 由 CMake 自动编译（MSVC 用 rc.exe，MinGW 用 windres）。
+1 ICON "app.ico"
