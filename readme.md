@@ -244,3 +244,14 @@ sessionEventReceived / questionRequested / errorOccurred`。
 - 导航栏顶部按钮：环境 / DSH 客户端 / 终端 / 网页小程序（原 DeepSeek / 今日头条 / GitHub-shgaol 三个按钮已移除）；
   **侧边栏启动时默认展开**（宽度 = 主窗口宽 1/6）。
 - 导出 PDF 默认名 = `工作区名_会话名`。
+
+- # 联系方式
+- shgaol@126.com
+- ## ❤️ 支持本项目
+
+如果您觉得这个项目对您有帮助，欢迎请我喝杯咖啡：
+
+| 微信 | 支付宝 |
+| :---: | :---: |
+|<img width="435" height="444" alt="878c5d80-c668-452b-ab84-ca8d1386b947" src="https://github.com/user-attachments/assets/5a6c2e93-e6b3-4e8b-a93c-327a5de719a1" />|<img width="358" height="370" alt="4f99919b-5fe6-42a2-9ba1-06e9b37d6048" src="https://github.com/user-attachments/assets/da31772f-dd43-4a43-a36b-a94bce6b2460" />
+|
