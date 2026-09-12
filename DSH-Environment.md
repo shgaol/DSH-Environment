@@ -91,6 +91,13 @@ DSH-Environment 是一个面向本机的「DSH 开发/运维控制台」，核�
 > 与外部网站登录（网页小程序里的各个站点，含内置预设 DeepSeek / 今日头条 / GitHub）：登录态是站点自己的 cookie（+ localStorage），因此**不动站点、也不动系统浏览器**，只把承载它的 WebEngine profile 的持久化目录指到 `configure` 下。这样「清理 Edge 缓存/Cookie」与「本程序的登录态」互不影响；备份 `configure/deepseek-web`（或 `toutiao-web` / `github-shgaol-web` / `webapplet-web`）目录即可迁移/恢复登录信息（`ForcePersistentCookies` 让会话 cookie 也落盘）。页面主题/暗色直接用**站点自带的主题功能**，程序不做任何强制配色。
 >
 > 与外部网站的外链：站内的引用跳转等**站外链接**改由外部浏览器（Edge）打开（`CDSWebEnginePage`），内嵌窗口保持当前页面；地址栏手动输入的网址仍在内嵌窗口打开（那是显式的站内浏览）；只拦 `NavigationTypeLinkClicked`，登录/重定向等其它导航类型一律放行。
+>
+> 与 MDI 标签切换（切几次后切回来变空白）：`QWebEngineView` 内部是 `QQuickWidget`（离屏渲染到 FBO），而 `QMdiArea` 的 TabbedView 只显示当前子窗口，切走的标签会把子窗口隐藏（Qt 在 `QWebEngineView::hideEvent` 里把 page 置为不可见，见 `qwebengineview.cpp`）。反复隐藏/显示后有两种坏情况：page 停在“不可见”（渲染暂停）、或该视图的离屏渲染表面失效 —— 后者表现为画面一直空白，**连 `reload()` 也刷不出来**（页面内容还在，只是没有被合成到窗口上），只有重建视图才能恢复（与手动“关掉这一页再重新打开”等价）。对策：
+> ① `main.cpp` 在创建 `QApplication` **之前**设置 `Qt::AA_ShareOpenGLContexts`（多个网页视图共享 OpenGL 上下文）；
+> ② `MainWindow::kickWebEngineRenders()`：子窗口被激活时（切 MDI 标签、或从「DSH源码管理」切回「应用」页）恢复 page 可见性 + 解除冻结 + `update()` + 1px 尺寸微调强制重新合成（**刻意不做 hide()/show()**：反复重建表面会让失效来得更快）；
+> ③ `CDSWebViewWindow::reload()`（「刷新」按钮）= **重建网页视图** + 按当前网址重新加载 —— 即手动“关掉这页再打开”的等价操作，保证空白窗口能就地救回；
+> ④ 渲染进程异常结束时（`renderProcessTerminated`）同样自动重建视图（同一窗口最多 3 次）。
+> 视图的创建与信号接线统一在 `CDSWebViewWindow::createWebView()`，构造函数与 `rebuildView()` 共用，保证重建出的视图与原视图一致。
 
 ### 3.6 DSH 客户端（对话）
 

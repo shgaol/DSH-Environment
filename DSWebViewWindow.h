@@ -61,8 +61,13 @@ public:
 
     // 打开指定网址（未启用 WebEngine 时显示占位提示）
     void openUrl(const QString &url);
-    // 刷新当前网页
+    // 刷新当前网页：内部走 rebuildView()（重建视图 + 重新加载当前网址）
     void reload();
+    // 重建网页视图：摘掉旧视图（连同页对象），换一套全新的再按当前网址加载。
+    // 用于救回“切标签切多了以后一直空白、刷新也刷不出来”的窗口 ——
+    // 网页视图内部是离屏渲染的 QQuickWidget，反复隐藏/显示后那一个视图的渲染表面会失效，
+    // 只有重建视图才能恢复（等价于手动“关掉这一页再重新打开”）。
+    void rebuildView();
 
     // 该窗口登录数据所在的磁盘目录（仅“外部网站窗口”有意义；DshService 返回空串）
     QString dataDir() const;
@@ -97,9 +102,14 @@ private:
     // token→cookie 交换: 用本地 HTTP 请求读取 Set-Cookie 并注入 WebView, 再加载干净的 /。
     // attempt 为重试计数; 服务未就绪时自动重试, 超出次数放弃。
     void tryTokenExchange(const QUrl &tokenUrl, const QUrl &clean, int attempt);
+    // 创建本窗口的网页视图（profile/页对象选择 + 信号接线）：
+    // 构造函数与 rebuildView() 共用，保证重建出的视图与原来的完全一致。
+    QWidget *createWebView(QWidget *parent);
 
     CDSWebProfileKind m_kind = CDSWebProfileKind::DshService; // 数据(profile)种类
     QString m_internalHostSuffix; // 本站视为“站内”的域名后缀（见构造函数说明）
+    int m_renderRecoverTries = 0; // 渲染进程异常结束后的自动重建次数（见 createWebView）
+    bool m_rebuilding = false;    // 是否正在重建网页视图（防重入）
     QWidget *m_view = nullptr;   // 中央内容（QWebEngineView / 容器 / 占位）
     void *m_webView = nullptr;   // QWebView 指针（QWindow 子类，需 createWindowContainer 包装）
     QLineEdit *m_addrEdit = nullptr; // 地址栏（像 Edge，可输入并显示当前网址）

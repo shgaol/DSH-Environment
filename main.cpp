@@ -104,6 +104,13 @@ int main(int argc, char *argv[])
 
     qInstallMessageHandler(messageHandler);
 
+    // Qt WebEngine 的网页视图内部是 QQuickWidget（离屏渲染）。应用里同时存在多个网页视图
+    // （每个网页小程序窗口一个）时，必须在创建 QApplication 之前打开“共享 OpenGL 上下文”，
+    // 否则个别视图在隐藏/显示后渲染表面可能失效：切回标签时网页变成空白，且刷新也刷不出来
+    // （页面内容还在，只是没有新的合成画面）。放在这里是因为该属性只能在 QApplication
+    // 创建之前设置，之后再设无效。
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+
 #if defined(DSH_HAVE_WEBVIEW) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     // Qt WebView 初始化：必须在创建 QApplication 之前调用，否则 QWebView 无法工作
     QtWebView::initialize();

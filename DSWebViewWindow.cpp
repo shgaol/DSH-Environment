@@ -26,6 +26,7 @@
 #include <QTimer>
 #include <QVariant>
 #include <QWebEngineCookieStore>
+#include <QWebEnginePage>
 #include <QWebEngineProfile>
 #include <QWebEngineView>
 #endif
@@ -35,6 +36,10 @@
 #endif
 
 namespace {
+// 渲染进程异常结束（崩溃/被系统回收）后，同一窗口最多自动重新加载几次，
+// 避免站点本身一直崩时反复刷屏；加载成功后计数清零。
+const int kMaxRenderRecover = 3;
+
 // ---- 各类型窗口的站点信息（表驱动：新增一个外部网站只需加枚举值 + 这里一行）----
 struct SiteInfo {
     CDSWebProfileKind kind;
@@ -261,37 +266,9 @@ CDSWebViewWindow::CDSWebViewWindow(CDSWebProfileKind kind, QWidget *parent,
     }
     v->addLayout(addrRow);
 
-#ifdef DSH_HAVE_WEBENGINE
-    // 网页显示用 QWebEngineView（标准 Qt5/Qt6 方式）
-    if (externalSite) {
-        // 外部网站（含网页小程序）：专属持久化 profile（数据落在 configure 目录）
-        // + CDSWebEnginePage（站外链接交给外部浏览器 Edge 打开，站内链接仍在内嵌窗口内导航）
-        // + CDSWebEngineView（右键菜单追加“使用默认浏览器打开链接”）。
-        // 视图先建、页对象以视图为父对象（setPage 不接管所有权，
-        // 靠 QObject 父子关系随视图一起销毁）。
-        auto *view = new CDSWebEngineView(central);
-        view->setPage(new CDSWebEnginePage(
-            QStringList{m_internalHostSuffix},
-            siteProfile(m_kind), view));
-        m_view = view;
-    } else {
-        m_view = new QWebEngineView(webProfile(), central);
-    }
-#elif defined(DSH_HAVE_WEBVIEW) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    // Qt WebView（Windows 上基于 Edge WebView2）：QWebView 是 QWindow 子类，
-    // 用 createWindowContainer 包装成 QWidget 后嵌入主窗口
-    auto *webView = new QWebView;
-    m_view = QWidget::createWindowContainer(webView, central);
-    m_webView = webView;
-#else
-    // 降级：无可用网页后端时的占位显示
-    auto *tb = new QTextBrowser(central);
-    tb->setPlainText(externalSite
-                         ? QStringLiteral("无可用网页后端，无法显示 %1。\n（登录数据目录仍为：%2）")
-                               .arg(defaultTitle(m_kind), siteDataDir(m_kind))
-                         : QStringLiteral("无可用网页后端，网页无法显示。"));
-    m_view = tb;
-#endif
+    // 网页视图（含页对象/profile 选择与信号接线）统一由 createWebView 创建，
+    // 这样「刷新」时重建出来的视图与构造函数建出来的完全一致（见 rebuildView）。
+    m_view = createWebView(central);
     v->addWidget(m_view, 1);
 
     setCentralWidget(central);
@@ -304,11 +281,54 @@ CDSWebViewWindow::CDSWebViewWindow(CDSWebProfileKind kind, QWidget *parent,
     if (m_dataDirBtn) {
         connect(m_dataDirBtn, &QToolButton::clicked, this, &CDSWebViewWindow::openDataDir);
     }
+}
+
+// 创建本窗口的网页视图：按 CDSWebProfileKind 选 profile，并按需套上 CDSWebEnginePage
+// （站外链接交给 Edge）/ CDSWebEngineView（右键“使用默认浏览器打开链接”），最后接好信号。
+// 构造函数与 rebuildView() 共用，保证重建出的视图与原来的完全一致。
+QWidget *CDSWebViewWindow::createWebView(QWidget *parent)
+{
+    const bool externalSite = isExternalSite(m_kind);
+    QWidget *view = nullptr;
+
 #ifdef DSH_HAVE_WEBENGINE
-    if (auto *eng = qobject_cast<QWebEngineView *>(m_view)) {
+    // 网页显示用 QWebEngineView（标准 Qt5/Qt6 方式）
+    if (externalSite) {
+        // 外部网站（含网页小程序）：专属持久化 profile（数据落在 configure 目录）
+        // + CDSWebEnginePage（站外链接交给外部浏览器 Edge 打开，站内链接仍在内嵌窗口内导航）
+        // + CDSWebEngineView（右键菜单追加“使用默认浏览器打开链接”）。
+        // 视图先建、页对象以视图为父对象（setPage 不接管所有权，
+        // 靠 QObject 父子关系随视图一起销毁）。
+        auto *engView = new CDSWebEngineView(parent);
+        engView->setPage(new CDSWebEnginePage(QStringList{m_internalHostSuffix},
+                                             siteProfile(m_kind), engView));
+        view = engView;
+    } else {
+        view = new QWebEngineView(webProfile(), parent);
+    }
+#elif defined(DSH_HAVE_WEBVIEW) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    // Qt WebView（Windows 上基于 Edge WebView2）：QWebView 是 QWindow 子类，
+    // 用 createWindowContainer 包装成 QWidget 后嵌入主窗口
+    auto *webView = new QWebView;
+    m_webView = webView;
+    view = QWidget::createWindowContainer(webView, parent);
+#else
+    // 降级：无可用网页后端时的占位显示
+    auto *tb = new QTextBrowser(parent);
+    tb->setPlainText(externalSite
+                         ? QStringLiteral("无可用网页后端，无法显示 %1。\n（登录数据目录仍为：%2）")
+                               .arg(defaultTitle(m_kind), siteDataDir(m_kind))
+                         : QStringLiteral("无可用网页后端，网页无法显示。"));
+    view = tb;
+#endif
+
+#ifdef DSH_HAVE_WEBENGINE
+    // 地址栏回显 / 图标转发 / 渲染异常恢复（重建视图后要重新接一次，所以放在这里）
+    if (auto *eng = qobject_cast<QWebEngineView *>(view)) {
         connect(eng, &QWebEngineView::urlChanged, this, [this](const QUrl &u) {
-            if (m_addrEdit)
+            if (m_addrEdit) {
                 m_addrEdit->setText(u.toString());
+            }
             emit urlChanged(u.toString());
         });
         // 网页图标(favicon)：WebEngine 解出图标后转发给外层（外层把它设为 MDI 子窗口图标，
@@ -319,8 +339,75 @@ CDSWebViewWindow::CDSWebViewWindow(CDSWebProfileKind kind, QWidget *parent,
             }
             emit faviconChanged(icon);
         });
+        // 渲染进程异常结束（站点自身崩溃、内存不足被系统回收等）会让这个窗口变成空白：
+        // 重建整个视图把画面救回来（同一窗口最多 kMaxRenderRecover 次，加载成功即清零）。
+        // 必须延到事件循环下一轮 —— 不能在页对象自己的信号处理里把页对象销毁掉。
+        if (QWebEnginePage *page = eng->page()) {
+            connect(page, &QWebEnginePage::renderProcessTerminated, this,
+                    [this](QWebEnginePage::RenderProcessTerminationStatus status, int exitCode) {
+                        Q_UNUSED(status);
+                        Q_UNUSED(exitCode);
+                        if (m_renderRecoverTries >= kMaxRenderRecover || m_rebuilding) {
+                            return;
+                        }
+                        ++m_renderRecoverTries;
+                        QTimer::singleShot(0, this, [this]() { rebuildView(); });
+                    });
+            connect(page, &QWebEnginePage::loadFinished, this, [this](bool ok) {
+                if (ok) {
+                    m_renderRecoverTries = 0; // 加载成功：自动恢复次数清零
+                }
+            });
+        }
     }
 #endif
+    return view;
+}
+
+// 重建网页视图：摘掉并销毁旧视图（连同它的页对象），换一个全新的视图 + 页对象，按当前网址重新加载。
+// 为什么要重建：网页视图内部是离屏渲染的 QQuickWidget，MDI 标签反复切换（隐藏/显示）后，
+// 那一个视图的渲染表面会失效 —— 画面一直空白、单纯 reload() 也刷不出来（页面内容还在，
+// 只是没有被合成到窗口上），只有重建视图才能恢复，等价于手动“关掉这一页再重新打开”。
+void CDSWebViewWindow::rebuildView()
+{
+    if (m_rebuilding) {
+        return; // 防重入（例如渲染进程连续终止）
+    }
+    QWidget *central = centralWidget();
+    auto *v = central ? qobject_cast<QVBoxLayout *>(central->layout()) : nullptr;
+    if (!v || !m_view) {
+        return;
+    }
+    m_rebuilding = true;
+
+    const QString url = m_addrEdit ? m_addrEdit->text() : QString();
+    const int index = v->indexOf(m_view);
+
+    // 1) 摘掉旧视图：从布局移除并隐藏，回到事件循环后再真正删除
+    //（不在信号处理里直接 delete，避免自毁；仍留在父对象下，不会变成独立窗口）
+    QWidget *oldView = m_view;
+    v->removeWidget(oldView);
+    oldView->hide();
+    oldView->deleteLater();
+    m_view = nullptr;
+    m_webView = nullptr;
+
+    // 2) 建新视图并放回原来的位置
+    QWidget *view = createWebView(central);
+    m_view = view;
+    if (index >= 0) {
+        v->insertWidget(index, view, 1);
+    } else {
+        v->addWidget(view, 1);
+    }
+    view->show();
+
+    // 3) 重新加载当前网址（地址栏里就是当前地址）
+    if (!url.isEmpty()) {
+        openUrl(url);
+    }
+
+    m_rebuilding = false;
 }
 
 CDSWebViewWindow::~CDSWebViewWindow() = default;
@@ -443,13 +530,9 @@ void CDSWebViewWindow::tryTokenExchange(const QUrl &tokenUrl, const QUrl &clean,
 
 void CDSWebViewWindow::reload()
 {
-#ifdef DSH_HAVE_WEBENGINE
-    static_cast<QWebEngineView *>(m_view)->reload();
-#elif defined(DSH_HAVE_WEBVIEW) && QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    if (m_webView) {
-        static_cast<QWebView *>(m_webView)->reload();
-    }
-#else
-    // 占位模式：无操作
-#endif
+    // 「刷新」= 重建网页视图 + 按当前网址重新加载。
+    // 不用单纯的 reload()：网页视图的离屏渲染表面在 MDI 标签反复切换后会失效，
+    // 此时画面一直空白、reload() 也刷不出来（内容已加载，只是没被合成到窗口上），
+    // 重建视图才是唯一可靠的恢复手段（与手动“关掉这一页再重新打开”等价）。
+    rebuildView();
 }

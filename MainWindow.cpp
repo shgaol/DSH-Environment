@@ -19,12 +19,17 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QResizeEvent>
+#include <QSize>
 #include <QStyle>
 #include <QStyleFactory>
 #include <QSystemTrayIcon>
 #include <QTabWidget>
 #include <QTimer>
 #include <QUrl>
+#ifdef DSH_HAVE_WEBENGINE
+#include <QWebEnginePage>
+#include <QWebEngineView>
+#endif
 
 QIcon makeDIcon(const QColor &bg, int size)
 {
@@ -63,6 +68,37 @@ QIcon appletTabIcon(const QString &name, const QString &url)
     }
     return CUINavBarItem::makeLetterIcon(first.at(0), kAppletIconColor);
 }
+
+#ifdef DSH_HAVE_WEBENGINE
+// 让 root 里所有网页视图重新合成一帧。
+// 背景：QWebEngineView 内部是 QQuickWidget（离屏渲染到 FBO），而 QMdiArea 的 TabbedView
+// 只显示当前子窗口 —— 切换标签时其它子窗口会被隐藏，Qt 在 QWebEngineView::hideEvent 里
+// 会把 page 置为不可见（qwebengineview.cpp），渲染随之暂停；切回来时不一定恢复。
+// 做法：恢复 page 可见性并解除冻结，再 update() + 1px 尺寸微调强制走一次 resize，
+// 逼 WebEngine 重新合成。
+// 注意：这里刻意不做 hide()/show()（不做表面重建）—— 反复重建渲染表面会让“切几次标签后
+// 表面失效”来得更快；表面真失效时由「刷新」按钮走 CDSWebViewWindow::rebuildView() 重建视图。
+void kickWebEngineRenders(QWidget *root)
+{
+    if (!root) {
+        return;
+    }
+    const QList<QWebEngineView *> views = root->findChildren<QWebEngineView *>();
+    for (QWebEngineView *view : views) {
+        if (QWebEnginePage *page = view->page()) {
+            page->setVisible(true);
+            page->setLifecycleState(QWebEnginePage::LifecycleState::Active);
+        }
+        view->update();
+        const QSize size = view->size();
+        if (size.isEmpty()) {
+            continue;
+        }
+        view->resize(size.width() + 1, size.height());
+        view->resize(size);
+    }
+}
+#endif
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -108,6 +144,11 @@ MainWindow::MainWindow(QWidget *parent)
     // 开启 Tab 关闭按钮：点击 × 时 QMdiArea 内部自动关闭对应子窗口
     // （子窗口设置了 WA_DeleteOnClose，关闭后 destroyed 信号会清理映射）
     m_appMdiArea->setTabsClosable(true);
+    // 子窗口尺寸由我们自己管（每个窗口都用 showMaximized() 打开），
+    // 关掉“激活时自动最大化/还原”这一步：它会随每次切标签对子窗口做一次
+    // showNormal()/showMaximized()，等于给里面的网页视图又多加一轮隐藏/显示与缩放，
+    // 而网页视图（QWebEngineView）恰恰最怕这种反复折腾。
+    m_appMdiArea->setOption(QMdiArea::DontMaximizeSubWindowOnActivation, true);
     // Fusion 主题（只作用于该 MDI 区域及其子窗口，不影响程序其他部分外观）
     if (QStyle *fusion = QStyleFactory::create(QStringLiteral("Fusion"))) {
         fusion->setParent(m_appMdiArea); // 生命周期交给 MDI 区域管理
@@ -131,6 +172,30 @@ MainWindow::MainWindow(QWidget *parent)
         "  margin: 2px;"
         "}"));
     m_tabWidget->addTab(m_appMdiArea, QStringLiteral("应用"));
+
+#ifdef DSH_HAVE_WEBENGINE
+    // 切换 MDI 标签（或从“DSH源码管理”页切回“应用”页）时，让当前网页视图重新合成一帧，
+    // 避免个别网站停在空白画面上（原因见上面的 kickWebEngineRenders）。
+    // 延到事件循环下一轮执行：此时 MDI 已经把子窗口摆好，且避开激活流程中的重入。
+    connect(m_appMdiArea, &QMdiArea::subWindowActivated, this,
+            [this](QMdiSubWindow *) {
+                QTimer::singleShot(0, this, [this]() {
+                    if (QMdiSubWindow *active = m_appMdiArea->activeSubWindow()) {
+                        kickWebEngineRenders(active->widget());
+                    }
+                });
+            });
+    connect(m_tabWidget, &QTabWidget::currentChanged, this, [this](int) {
+        if (m_tabWidget->currentWidget() != m_appMdiArea) {
+            return; // 只看“切回应用页”
+        }
+        QTimer::singleShot(0, this, [this]() {
+            if (QMdiSubWindow *active = m_appMdiArea->activeSubWindow()) {
+                kickWebEngineRenders(active->widget());
+            }
+        });
+    });
+#endif
 
     layout->addWidget(m_tabWidget, 1); // 右侧占满剩余空间
 
