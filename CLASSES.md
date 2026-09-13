@@ -22,14 +22,14 @@
 | 服务端口 | 登记/注销运行中的服务端口，程序退出时按端口关闭对应服务（`killAllServices`） |
 
 ### `main.cpp`—— 程序入口（函数，非类）
-- 用 Win32 API 获取 exe 目录，并在 QApplication 创建前把工作目录、插件、翻译等指向 `bin/Resource`。
+- 用 Win32 API 获取 exe 目录，并在 QApplication 创建前把工作目录、插件、翻译等指向 `DSH-Environment-bin/Resource`。
 - 加载 `qt_zh_CN.qm` 翻译；屏蔽 Qt 内部噪音日志。
 - **单实例**：用命名管道（`QLocalServer`/`QLocalSocket`，key=`DSH-Environment-SingleInstance`）检测，
   已有实例则发送 `show` 让其显示主窗口，本实例退出。
 - 给 `CApplication` 设置窗口图标（`:/app.ico`），连接 `aboutToQuit → killAllServices()`。
-- 创建 `MainWindow`，往左侧导航栏（`CUINavBar`）填“环境”“DSH 客户端”“终端”“网页小程序”四个顶部按钮并连接点击行为；
+- 创建 `MainWindow`，往左侧导航栏（`CUINavBar`）填“环境”“DSH 客户端”“终端”三个顶部按钮并连接点击行为；
   设置信息区（图标 + DSH / DSH-Environment / 作者:shgaol）；**侧边栏默认展开**（`navBar()->setExpanded(true)`），最后最大化显示。
-  （原先的“DeepSeek”“今日头条”“GitHub/shgaol”三个按钮已移除，这三个站点改由“网页小程序”打开。）
+  （原先的“DeepSeek”“今日头条”“GitHub/shgaol”三个按钮与“网页小程序”功能均已移除 —— 网页小程序已迁移到另一个项目。）
 
 ---
 
@@ -64,12 +64,6 @@ sessionEventReceived / questionRequested / errorOccurred`。
 - “应用”页内嵌 `QMdiArea`（Tab 模式、带关闭按钮、Fusion 主题）。
 - `openWebView(url)`：按网址去重，同一网址只开一个 `CDSWebViewWindow`，重复则激活。
 - `openDshChatAt(address)` / `openDshChat()`：按 `客户端: address` 去重打开/激活 `CDSHChatWindow`。
-- `openWebApplets()`：在 MDI 打开/激活标题为“网页小程序”的表页（已存在则激活，不重复新建）；
-  `openWebAppletWindow(name, url)`：双击表页里的快捷方式时打开网页窗口——按网址取 profile
-  （`CDSWebViewWindow::kindForUrl(url)`：属于内置站点预设则沿用其 profile，否则用网页小程序自己的），
-  按小程序名称去重，MDI 标题为小程序名称、不跟随网址。
-  （原 `openSiteWindow(kind)` 与 `openDeepSeekWeb()` / `openToutiaoWeb()` / `openGithubWeb()` 已随
-  三个导航栏按钮一并移除，这三个站点改由网页小程序打开。）
 - `updateNavBarWidth()`：导航栏宽度 = 展开时主窗口宽 1/6、收起时 72px（`expandedChanged` 与 `resizeEvent` 触发）；
   侧边栏默认展开由 main.cpp 在显示前 `setExpanded(true)` 完成。
 - 关闭/最小化 → 隐藏到系统托盘；托盘右键“显示 / 退出”，仅“退出”真正退出。
@@ -87,29 +81,27 @@ sessionEventReceived / questionRequested / errorOccurred`。
 图标由程序内置绘制（`enum class Icon` + `makeLetterIcon`），无需外部图片资源。
 
 ### `CDSWebViewWindow`（`DSWebViewWindow.h` / `.cpp`）—— 内嵌网页窗口
-`QMainWindow`，顶部地址栏 + 刷新（有专属 profile 的窗口另有「登录数据」按钮）。
+`QMainWindow`，顶部地址栏 + 刷新（有专属 profile 的窗口另有「登录数据」按钮；「刷新」= `rebuildView()`：
+重建网页视图 + 按当前网址重新加载，用于救回“离屏渲染表面失效、画面空白且 reload 也刷不出来”的窗口）。
 按 `CDSWebProfileKind` 选 profile：`DshService`（共享 `dsh-web` + token→cookie 交换）、
 `DeepSeek`（`dsh-deepseek` → `configure/deepseek-web`）、`Toutiao`（`dsh-toutiao` → `configure/toutiao-web`）、
-`GitHub`（`dsh-github` → `configure/github-shgaol-web`）、`WebApplet`（`dsh-webapplet` → `configure/webapplet-web`，网页小程序）。
-后四种都是“外部网站窗口”（`isExternalSite`），数据目录独立于 Edge：用专属 profile +
-`CDSWebEnginePage`（站外链接交给 Edge）+ `CDSWebEngineView`（右键可交默认浏览器打开），
-行为完全一致，区别只在“站内域名后缀”的来源——前三种取站点信息表，`WebApplet` 由构造参数按小程序网址给出。
-其中 `DeepSeek` / `Toutiao` / `GitHub` 是**内置站点 profile 预设**：原先各有导航栏按钮（已移除），
-保留预设是为了让指向这些站点的小程序沿用它们原有的 profile 与数据目录，登录状态不丢。
+`GitHub`（`dsh-github` → `configure/github-shgaol-web`）。
+后三种是“外部网站窗口”（`isExternalSite`），数据目录独立于 Edge：用专属 profile +
+`CDSWebEnginePage`（站外链接交给 Edge）+ `CDSWebEngineView`（右键可交默认浏览器打开）。
+这三个是**内置站点 profile 预设**：原先各有导航栏按钮（已移除），**目前没有调用方**（预留给以后再用）。
 站点信息表驱动（`kSiteInfos`：标题 / profile 名 / 数据目录名 / 站内域名后缀），
-对外提供 `defaultTitle(kind)` / `isExternalSite(kind)` 与
-`kindForUrl(url)`（按站内域名后缀把网址匹配到内置站点预设，用于网页小程序沿用该预设的 profile）、
-`profileFor(kind)`（供网页图标读取复用同一 profile）、`dataDir()` / `openDataDir()`。
-（原静态查询 `homeUrl(kind)` 与 `MainWindow::openSiteWindow` 已随三个按钮移除。）
+对外提供 `defaultTitle(kind)` / `isExternalSite(kind)` 与 `dataDir()` / `openDataDir()`。
+（`homeUrl(kind)`、`kindForUrl(url)`、`profileFor(kind)` 与 `MainWindow::openSiteWindow` 都已随按钮/小程序功能移除。）
+另：`faviconChanged(QIcon)` 信号（来自 WebEngine `iconChanged`）供外层设置 MDI 子窗口图标；
+`renderProcessTerminated` 时自动 `rebuildView()`（同窗口最多 3 次）。
 
 ### `CDSWebEnginePage`（`DSWebEnginePage.h` / `.cpp`）—— 站外链接交给外部浏览器（Edge）
 仅在 WebEngine 后端编译（整份 `#ifdef DSH_HAVE_WEBENGINE`；无自定义信号/槽，故不声明 `Q_OBJECT`）。
 - 主框架里**用户点击的站外链接**（`NavigationTypeLinkClicked`）→ `acceptNavigationRequest` 返回 `false`，
-  用 `openInExternalBrowser()` 交给 Edge，内嵌窗口保持当前页面（网页小程序窗口里点到的站外来源链接等）。
+  用 `openInExternalBrowser()` 交给 Edge，内嵌窗口保持当前页面。
 - **新窗口请求**（`target="_blank"`、`window.open`、中键、右键“在新标签页打开”）→ 站外交给 Edge；
   站内用 `QTimer::singleShot(0)` 就地 `setUrl()`（Qt 默认会把这类请求直接丢弃，表现为“点了没反应”）。
-- 站内/站外按构造传入的域名后缀判定（内置预设 DeepSeek = `deepseek.com`、今日头条 = `toutiao.com`、GitHub = `github.com`；
-  网页小程序窗口由 `CDSWebAppletPage::siteHostSuffix(url)` 从网址推出，如 `chat.deepseek.com` → `deepseek.com`）；
+- 站内/站外按构造传入的域名后缀判定（内置预设 DeepSeek = `deepseek.com`、今日头条 = `toutiao.com`、GitHub = `github.com`）；
   `javascript:/data:/blob:/about:` 等页面内部协议放行，`mailto:/tel:` 交系统默认程序。
 - `openInExternalBrowser()`：先查注册表 `App Paths\msedge.exe`（HKCU → HKLM），再查
   `ProgramFiles(x86)/ProgramFiles/LOCALAPPDATA` 下的 Edge 安装路径；找不到或启动失败回退 `QDesktopServices::openUrl`。
@@ -162,42 +154,7 @@ sessionEventReceived / questionRequested / errorOccurred`。
 
 ---
 
-## 六、网页小程序（WebApplet）
-
-### `CDSWebAppletPage`（`WebApplet/DSWebAppletPage.h` / `.cpp`）—— “网页小程序”表页
-在「应用」页的 MDI 中以子窗口形式打开（标题“网页小程序”，已存在则激活）。
-
-- **按钮区**：增加 / 修改 / 删除。**快捷方式区**：`QListWidget` 图标模式（48×48 图标 + 名称，自动换行）。
-- **双击**（或选中项上回车）→ `openRequested(name, url)` → `MainWindow::openWebAppletWindow`：
-  打开 `CDSWebViewWindow(kindForUrl(url), nullptr, siteHostSuffix(url))`，**行为与内置站点预设窗口完全一致**，
-  MDI 标题为小程序名称、按名称去重。
-- **profile 按网址复用（登录状态共用，不用重新登录）**：网址属于内置站点预设时，`kindForUrl(url)` 返回该预设类型，
-  profile 与**原来侧边栏按钮打开的窗口**是同一份（DeepSeek → `configure/deepseek-web`、今日头条 → `configure/toutiao-web`、
-  GitHub → `configure/github-shgaol-web`）；其它网址才用 `configure/webapplet-web`。
-- **右键某个小程序** → 菜单「修改 / 删除」（右键会先选中被点中的小程序；空白处右键不弹菜单）。
-- 校验规则由 `CDSWebAppletDlg` 保证：名称/网址必填、名称不可重复（忽略大小写，修改时排除自己）。
-- 保存后异步读取该网页的图标，取到后把快捷方式刷新为“网页图标 + 名称”。
-- 静态工具 `siteHostSuffix(url)`：由网址推出“站内域名后缀”（`chat.deepseek.com` → `deepseek.com`、
-  `www.163.com` → `163.com`、`www.abc.com.cn` → `abc.com.cn`），供 `CDSWebEnginePage` 判定站内/站外链接。
-
-### `CDSWebAppletDlg`（`WebApplet/DSWebAppletDlg.h` / `.cpp`）—— 网页小程序录入对话框
-增加/修改共用。名称必填且不能重复、网址必填并在缺协议时自动补 `https://`（`normalizeUrl`），
-另校验网址格式（`QUrl` 合法且带主机名）。
-
-### `CDSWebAppletIconFetcher`（`WebApplet/DSWebAppletIconFetcher.h` / `.cpp`）—— 网页图标读取器
-异步读取网页图标并落盘（64×64 PNG），取值顺序：Qt6 已解码图标（`iconChanged`）→ 网页声明的
-图标地址（`iconUrl`，`data:` 内联图标就地解码）→ `<站点>/favicon.ico` → 都失败则不发信号（界面用名称首字图标兜底）。
-探测页面用的 profile 与双击打开小程序窗口的一致（`profileFor(kindForUrl(url))`）。
-父对象挂在 `qApp` 上并自行 `deleteLater`，因此表页关闭后图标仍能取回并写回 JSON；取到后发 `iconReady`。
-
-### `CDSWebAppletStore`（`WebApplet/DSWebAppletStore.h` / `.cpp`）—— 小程序数据存取
-条目 `DSWebApplet{name, url, iconFile}`；JSON 落在 `文档/DSH-Environment/configure/webapplets/webapplets.json`，
-图标落在 `.../webapplets/icons/<uuid>.png`。`setIconFile(name, url, iconFile)` 只在名称与网址都一致时写回，
-避免改名/改址后把图标记到别处；图标文件名用 UUID 避开名称里的文件名非法字符。
-
----
-
-## 七、基础控件
+## 六、基础控件
 
 ### `CMdiArea`（`MdiArea.h` / `.cpp`）—— MDI 多文档区域
 继承 `QMdiArea`，提供 `openWindow(content, title)`：按标题打开或激活已有子窗口。
@@ -207,37 +164,38 @@ sessionEventReceived / questionRequested / errorOccurred`。
 
 ---
 
-## 八、遗留（未编译进当前版本，保留在磁盘）
+## 七、遗留（未编译进当前版本，保留在磁盘）
 
 - **`CDSHSettingsDlg`**（`SettingsDlg.h` / `.cpp`）：曾开发的 DSH 设置界面（官方 通用设置/模型/插件/Agent 预设 四栏布局），
   因用户取消 `CDSHChatWindow` 的设置入口而停用，**已从 `CMakeLists.txt` 移除**，不再参与构建。
 - **旧 `WebViewWindow`**：已重命名为 `CDSWebViewWindow`（`DSWebViewWindow.h/.cpp`），旧文件不再存在；
   `build` 目录中残留的历史 `moc_WebViewWindow.cpp` 属旧构建产物，可忽略。
+- **「网页小程序」全套**（`WebApplet/DSWebAppletStore` / `DSWebAppletDlg` / `DSWebAppletIconFetcher` / `DSWebAppletPage` 的 .h/.cpp）：
+  该功能已迁移到另一个项目，**文件与 `WebApplet/` 目录已删除并移出 `CMakeLists.txt`**。
+  同时移除的还有：导航栏「网页小程序」按钮、`MainWindow::openWebApplets()` / `openWebAppletWindow()`、
+  小程序窗口的 tab 图标兜底（`appletTabIcon()`）、`CDSWebProfileKind::WebApplet` 及其站点信息表行、
+  `CDSWebViewWindow::kindForUrl()` / `profileFor()` 与构造函数的 `internalHostSuffix` 参数。
+  `configure` 下的 `webapplets/`、`webapplet-web/` 目录本程序不再读写，可自行清理。
 
 ---
 
-## 九、本版本要点回顾
+## 八、本版本要点回顾
 
-- 纯 Widgets，Qt 6.11.2，CMake 构建；输出 `bin/`（exe + Qt DLL）、插件到 `bin/Resource`，并生成 `qt.conf`。
+- 纯 Widgets，Qt 6.11.2，CMake 构建；输出 `DSH-Environment-bin/`（exe + Qt DLL）、插件到 `DSH-Environment-bin/Resource`，并生成 `qt.conf`。
 - 与 DSH 服务通过 HTTP POST `/api/<method>` + WebSocket 下行流通信，支持会话/工作区/模型/预设/设置/提问等。
 - 会话名取自 `projections.values.title`，权限从 `projections.values.permissions`；归档仅隐藏。
 - 表 2 服务启动成功后只打开网站；打开 DSH 客户端由右键菜单手动触发，按 `127.0.0.1:<port>` 去重。
-- `CDSWebViewWindow` 支持五种 profile（`CDSWebProfileKind`）：`DshService`（共享 `dsh-web` + token→cookie 交换）、
+- `CDSWebViewWindow` 支持四种 profile（`CDSWebProfileKind`）：`DshService`（共享 `dsh-web` + token→cookie 交换）、
   `DeepSeek`（`dsh-deepseek` → `configure/deepseek-web`）、`Toutiao`（`dsh-toutiao` → `configure/toutiao-web`）、
-  `GitHub`（`dsh-github` → `configure/github-shgaol-web`）、`WebApplet`（`dsh-webapplet` → `configure/webapplet-web`）；
-  后四种数据独立于 Edge，清 Edge 缓存不影响登录；站点信息表驱动（`kSiteInfos`），新增类型只需加枚举值 + 一行。
-  `DeepSeek` / `Toutiao` / `GitHub` 现为**内置站点 profile 预设**（原导航栏按钮已移除）。
-  站点的主题/暗色使用网站自带功能，程序不强制配色。
-- 外部网站窗口（含网页小程序窗口）用 `CDSWebEnginePage`：页面里的**站外链接**（含 `target="_blank"`/`window.open` 的新窗口请求）
-  点击后交给 Edge 打开，内嵌窗口留在当前页面；站内由窗口的“站内域名后缀”决定（预设 DeepSeek/Toutiao/GitHub 分别为
-  `deepseek.com` / `toutiao.com` / `github.com`，小程序窗口按网址推出）。
-- **网页小程序**：导航栏「网页小程序」按钮 →「应用」页 MDI 中的“网页小程序”表页（已存在则激活）。
-  表页支持增加/修改/删除/双击打开，名称与网址必填、名称不可重复；保存后自动读取网页图标作为快捷方式图标
-  （`CDSWebAppletPage` + `CDSWebAppletDlg` + `CDSWebAppletIconFetcher` + `CDSWebAppletStore`）；
-  数据在 `configure/webapplets/webapplets.json` + `configure/webapplets/icons/`。
-  双击打开的小程序窗口按网址复用 profile：属于内置站点预设时用它们的 profile
-  （`configure/deepseek-web` 等，与原侧边栏按钮共用登录状态，不用重新登录），其它网址用
-  `configure/webapplet-web`；按小程序名称去重。
-- 导航栏顶部按钮：环境 / DSH 客户端 / 终端 / 网页小程序（原 DeepSeek / 今日头条 / GitHub-shgaol 三个按钮已移除）；
-  **侧边栏启动时默认展开**（宽度 = 主窗口宽 1/6）。
+  `GitHub`（`dsh-github` → `configure/github-shgaol-web`）；后三种数据独立于 Edge，站点信息表驱动（`kSiteInfos`）。
+  `DeepSeek` / `Toutiao` / `GitHub` 现为**内置站点 profile 预设**（原导航栏按钮已移除，目前无调用方）。
+- 外部网站窗口用 `CDSWebEnginePage`：页面里的**站外链接**（含 `target="_blank"`/`window.open` 的新窗口请求）
+  点击后交给 Edge 打开，内嵌窗口留在当前页面；站内由站点信息表的域名后缀决定
+  （DeepSeek/Toutiao/GitHub 分别为 `deepseek.com` / `toutiao.com` / `github.com`）。
+- 网页视图健壮性（与具体站点无关）：创建 `QApplication` 前设 `Qt::AA_ShareOpenGLContexts`；
+  切 MDI 标签时 `kickWebEngineRenders()` 恢复 page 可见性并强制重新合成（MDI 关掉“激活时自动最大化/还原”）；
+  「刷新」= `rebuildView()` 重建视图（救回离屏表面失效导致的空白页，reload 无效）；渲染进程异常结束自动重建（最多 3 次）。
+- **已移除**：导航栏「DeepSeek」「今日头条」「GitHub/shgaol」「网页小程序」按钮、`openSiteWindow` 及三个站点入口方法、
+  「网页小程序」全套（`WebApplet/*` 文件与目录已删除并移出构建，功能迁移到另一个项目）。
+- 导航栏顶部按钮：环境 / DSH 客户端 / 终端；**侧边栏启动时默认展开**（宽度 = 主窗口宽 1/6）。
 - 导出 PDF 默认名 = `工作区名_会话名`。

@@ -237,7 +237,7 @@ private:
     // 子会话结束后恢复为纯会话名称。
     bool m_subagentRunning = false;         // 当前会话是否有运行中的子会话
     QString m_baseSessionTitle;             // 当前会话的纯标题(不含“/子会话”后缀)
-    QString m_titleCachePath; // 会话标题本地缓存文件路径(bin/Resource/session_titles.json)
+    QString m_titleCachePath; // 会话标题本地缓存文件路径(exe 目录/Resource/session_titles.json)
     QSet<QString> m_archivedLocal; // 本地记录的归档会话(兜底,即使服务端不返回也过滤)
     QString m_archivedCachePath;   // 本地归档集合文件路径
     QString m_archiveSession;      // 当前正在归档的会话(关联 rpcId)

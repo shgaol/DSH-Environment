@@ -14,12 +14,9 @@ class QWidget;
 //  - DshService：本机 DSH 服务网页（127.0.0.1:port）。登录靠 token→cookie 交换，
 //                每次打开都重新登录，数据用应用共享 profile "dsh-web"。
 //  - DeepSeek / Toutiao / GitHub：**内置站点 profile 预设**（DeepSeek 官网、今日头条官网、
-//                GitHub 个人主页）。这三个站点原先各有导航栏按钮，按钮已移除，
-//                改为在“网页小程序”里登记快捷方式打开；保留预设是为了让指向这些站点的
-//                小程序沿用它们原有的 profile 与数据目录（deepseek-web / toutiao-web /
-//                github-shgaol-web），登录状态不丢（见 kindForUrl）。
-//  - WebApplet ：网页小程序（“网页小程序”表页里双击快捷方式打开的窗口：网址、标题与
-//                “站内域名后缀”都由调用方给出；网址属于上面三个预设时自动改用该预设）。
+//                GitHub 个人主页）。这三个站点原先各有导航栏按钮，按钮已移除；
+//                预设保留了各自的专属 profile 与数据目录（deepseek-web / toutiao-web /
+//                github-shgaol-web），目前没有调用方（预留给以后再用）。
 //
 // 除 DshService 外都是“外部网站窗口”，与 DshService 的差别：
 //   1) 登录信息（cookie / localStorage / IndexedDB / 站点权限 / 缓存）显式落在
@@ -34,7 +31,6 @@ enum class CDSWebProfileKind {
     DeepSeek,   // 内置站点预设：DeepSeek 官网（数据目录 deepseek-web）
     Toutiao,    // 内置站点预设：今日头条官网（数据目录 toutiao-web）
     GitHub,     // 内置站点预设：GitHub 个人主页（数据目录 github-shgaol-web）
-    WebApplet,  // 网页小程序（其它网址共用它的 profile，数据目录 webapplet-web）
 };
 
 #ifdef DSH_HAVE_WEBENGINE
@@ -50,13 +46,8 @@ class CDSWebViewWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    // internalHostSuffix 本窗口视为“站内”的域名后缀（如 deepseek.com）。
-    //   默认取 kSiteInfos 里该类型的配置（DshService 为空串，不适用）；
-    //   网页小程序窗口由调用方按小程序网址给出，使站内链接在窗口内导航、
-    //   站外链接交给 Edge —— 与内置站点预设窗口（DeepSeek 等）行为一致。
     explicit CDSWebViewWindow(CDSWebProfileKind kind = CDSWebProfileKind::DshService,
-                              QWidget *parent = nullptr,
-                              const QString &internalHostSuffix = QString());
+                              QWidget *parent = nullptr);
     ~CDSWebViewWindow() override;
 
     // 打开指定网址（未启用 WebEngine 时显示占位提示）
@@ -75,21 +66,11 @@ public:
     void openDataDir();
 
     // ---- 各类窗口的静态信息（供 MainWindow 使用）----
-    // 窗口标题（未指定标题时的兜底：DeepSeek / 今日头条 / 网页小程序 等）
+    // 窗口标题（未指定标题时的兜底：DeepSeek / 今日头条 等）
     static QString defaultTitle(CDSWebProfileKind kind);
     // 是否为“外部网站窗口”（专属 profile + 站外链接交给 Edge + “登录数据”按钮；
     // 即除 DshService 外的所有类型）
     static bool isExternalSite(CDSWebProfileKind kind);
-    // 按网址找出它属于哪个内置站点预设（站点信息表的 internalHost 后缀匹配：
-    // chat.deepseek.com / www.deepseek.com → DeepSeek，gist.github.com → GitHub …），
-    // 都不匹配则返回 WebApplet。用途：网页小程序打开的网址若就是内置站点，
-    // 就沿用该站点原有的 profile —— 登录信息/cache 与之前的侧边栏按钮完全同一份，不用重新登录。
-    static CDSWebProfileKind kindForUrl(const QString &url);
-
-#ifdef DSH_HAVE_WEBENGINE
-    // 该类型窗口使用的 WebEngine profile（供网页图标读取等复用同一份登录态与缓存）
-    static QWebEngineProfile *profileFor(CDSWebProfileKind kind);
-#endif
 
 signals:
     // 网页加载到的网址变化时发出(用于让外层 MDI 标题保持一致)
@@ -107,7 +88,6 @@ private:
     QWidget *createWebView(QWidget *parent);
 
     CDSWebProfileKind m_kind = CDSWebProfileKind::DshService; // 数据(profile)种类
-    QString m_internalHostSuffix; // 本站视为“站内”的域名后缀（见构造函数说明）
     int m_renderRecoverTries = 0; // 渲染进程异常结束后的自动重建次数（见 createWebView）
     bool m_rebuilding = false;    // 是否正在重建网页视图（防重入）
     QWidget *m_view = nullptr;   // 中央内容（QWebEngineView / 容器 / 占位）

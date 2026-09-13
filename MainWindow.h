@@ -1,7 +1,7 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
-#include "DSWebViewWindow.h" // CDSWebViewWindow / CDSWebProfileKind（网页窗口：DSH 服务 + 网页小程序）
+#include "DSWebViewWindow.h" // CDSWebViewWindow / CDSWebProfileKind（DSH 服务网页窗口等）
 
 #include <QColor>
 #include <QHash>
@@ -49,11 +49,6 @@ public:
     void openDshChatAt(const QString &address, const QString &tokenUrl = QString(), bool autoConnect = false);
     // 打开类似 CMD 的终端视图窗口（CDSCmdView，按标题去重，重复则激活）
     void openCmdView();
-    // 打开“网页小程序”表页（MDI 子窗口，标题固定为“网页小程序”，
-    // 已存在则激活该表页，不重复新建）
-    void openWebApplets();
-    // 在 MDI 中打开一个网页小程序窗口（按小程序名称去重，重复则激活已打开的窗口）
-    void openWebAppletWindow(const QString &name, const QString &url);
     // 在 MDI 中打开一个 CDSCmdView 终端窗口，标题为 title，工作目录 workingDir，
     // 并按序执行 lines 命令（按 title 去重，重复则激活）
     void openCmdTerminal(const QString &title, const QString &workingDir,

@@ -40,6 +40,49 @@ namespace {
 // 避免站点本身一直崩时反复刷屏；加载成功后计数清零。
 const int kMaxRenderRecover = 3;
 
+#ifdef DSH_HAVE_WEBENGINE
+// 注入页面的“记录光标下链接”钩子（每次加载完成后注入一次，页面跳转会重置 JS 上下文）。
+// 右键时用 elementsFromPoint 取出该点上的所有元素（从最上层开始），逐个向上找 <a>，
+// 把绝对地址记到 window.__dshLinkUnderCursor，供 CDSWebEngineView 的右键菜单兜底使用：
+// Chromium 只对它自己识别出的链接给 linkUrl，被浮层盖住的链接 / SVG 链接 / JS 跳转的元素
+// 拿不到，这条兜底就是为了那些情况。用捕获阶段监听，页面 stopPropagation 也不影响。
+const char *const kLinkHookScript = R"JS(
+(function () {
+    try {
+        if (window.__dshLinkHookInstalled) { return; }
+        window.__dshLinkHookInstalled = true;
+        window.__dshLinkUnderCursor = '';
+        function resolve(el) {
+            while (el && el.tagName) {
+                if (el.tagName.toLowerCase() === 'a') {
+                    var href = el.getAttribute('href');
+                    if (href) {
+                        try { return new URL(href, document.baseURI).href; } catch (e) { return href; }
+                    }
+                }
+                el = el.parentElement;
+            }
+            return '';
+        }
+        function remember(e) {
+            var url = '';
+            if (e && typeof e.clientX === 'number' && document.elementsFromPoint) {
+                var els = document.elementsFromPoint(e.clientX, e.clientY);
+                for (var i = 0; i < els.length && !url; ++i) { url = resolve(els[i]); }
+            } else if (e && typeof e.clientX === 'number' && document.elementFromPoint) {
+                url = resolve(document.elementFromPoint(e.clientX, e.clientY));
+            }
+            window.__dshLinkUnderCursor = url || '';
+        }
+        document.addEventListener('contextmenu', remember, true);
+        document.addEventListener('mousedown', function (e) {
+            if (e.button === 2) { remember(e); }
+        }, true);
+    } catch (err) { /* 注入失败不影响页面本身 */ }
+})();
+)JS";
+#endif
+
 // ---- 各类型窗口的站点信息（表驱动：新增一个外部网站只需加枚举值 + 这里一行）----
 struct SiteInfo {
     CDSWebProfileKind kind;
@@ -51,18 +94,13 @@ struct SiteInfo {
 
 // 站点信息表（表驱动）：
 //   - DshService 是本机 DSH 服务窗口（共享 profile + token→cookie 交换）；
-//   - DeepSeek / Toutiao / GitHub 是**内置站点 profile 预设**：原来各有导航栏按钮，
-//     按钮已移除，改为在“网页小程序”里登记快捷方式打开；保留预设是为了让指向这些站点的
-//     网页小程序沿用它们原有的 profile 与数据目录（登录状态不丢）：kindForUrl() 用这里的
-//     internalHost 后缀把网址匹配回对应类型；
-//   - WebApplet 是网页小程序自己的类型（其它网址共用它的 profile），
-//     「站内域名后缀」由调用方按小程序网址给出（构造函数 internalHostSuffix），这里留空串。
+//   - DeepSeek / Toutiao / GitHub 是**内置站点 profile 预设**：原来各有导航栏按钮，按钮已移除；
+//     预设保留了各自的专属 profile、数据目录与「站内域名后缀」，目前没有调用方（预留给以后再用）。
 const SiteInfo kSiteInfos[] = {
     {CDSWebProfileKind::DshService, "DSH 服务", "dsh-web", "", ""},
     {CDSWebProfileKind::DeepSeek, "DeepSeek", "dsh-deepseek", "deepseek-web", "deepseek.com"},
     {CDSWebProfileKind::Toutiao, "今日头条", "dsh-toutiao", "toutiao-web", "toutiao.com"},
     {CDSWebProfileKind::GitHub, "GitHub/shgaol", "dsh-github", "github-shgaol-web", "github.com"},
-    {CDSWebProfileKind::WebApplet, "网页小程序", "dsh-webapplet", "webapplet-web", ""},
 };
 
 // 取某类型窗口的站点信息（未知类型兜底为 DSH 服务）
@@ -187,51 +225,14 @@ bool CDSWebViewWindow::isExternalSite(CDSWebProfileKind kind)
 {
     // 除本机 DSH 服务窗口外的都是“外部网站窗口”：专属 profile（数据落在 configure 目录）、
     // 站外链接交给 Edge 打开、工具栏带“登录数据”按钮。
-    // 网页小程序（WebApplet）与 DeepSeek / 今日头条 / GitHub 走的是同一套行为，
-    // 区别只在“站内域名后缀”按小程序网址动态给出。
     return kind != CDSWebProfileKind::DshService;
 }
 
-CDSWebProfileKind CDSWebViewWindow::kindForUrl(const QString &url)
-{
-    const QString host = QUrl(url).host().toLower();
-    if (!host.isEmpty()) {
-        // 用站点信息表里的“站内域名后缀”做匹配（与 CDSWebEnginePage 判定站内/站外同一规则）：
-        // 同一个后缀下的窗口共用同一个 profile，因此登录信息与缓存也是同一份。
-        for (const SiteInfo &info : kSiteInfos) {
-            if (info.kind == CDSWebProfileKind::DshService) {
-                continue; // 本机 DSH 服务窗口不走网址匹配
-            }
-            const QString suffix = QString::fromUtf8(info.internalHost).toLower();
-            if (suffix.isEmpty()) {
-                continue; // 网页小程序本身没有固定后缀
-            }
-            if (host == suffix || host.endsWith(QLatin1Char('.') + suffix)) {
-                return info.kind;
-            }
-        }
-    }
-    return CDSWebProfileKind::WebApplet; // 其它网址：用网页小程序自己的 profile
-}
-
-#ifdef DSH_HAVE_WEBENGINE
-QWebEngineProfile *CDSWebViewWindow::profileFor(CDSWebProfileKind kind)
-{
-    return isExternalSite(kind) ? siteProfile(kind) : webProfile();
-}
-#endif
-
-CDSWebViewWindow::CDSWebViewWindow(CDSWebProfileKind kind, QWidget *parent,
-                                   const QString &internalHostSuffix)
+CDSWebViewWindow::CDSWebViewWindow(CDSWebProfileKind kind, QWidget *parent)
     : QMainWindow(parent)
     , m_kind(kind)
 {
     const bool externalSite = isExternalSite(m_kind);
-    // “站内”域名后缀：调用方给了就用它（网页小程序按小程序网址给出），
-    // 否则用该类型在站点信息表里的配置（DeepSeek = deepseek.com 等）。
-    m_internalHostSuffix = internalHostSuffix.isEmpty()
-        ? QString::fromUtf8(siteInfo(m_kind).internalHost)
-        : internalHostSuffix;
     setWindowTitle(defaultTitle(m_kind));
 
     // 中央内容：顶部地址栏(像 Edge) + 网页视图
@@ -294,14 +295,15 @@ QWidget *CDSWebViewWindow::createWebView(QWidget *parent)
 #ifdef DSH_HAVE_WEBENGINE
     // 网页显示用 QWebEngineView（标准 Qt5/Qt6 方式）
     if (externalSite) {
-        // 外部网站（含网页小程序）：专属持久化 profile（数据落在 configure 目录）
+        // 外部网站：专属持久化 profile（数据落在 configure 目录）
         // + CDSWebEnginePage（站外链接交给外部浏览器 Edge 打开，站内链接仍在内嵌窗口内导航）
         // + CDSWebEngineView（右键菜单追加“使用默认浏览器打开链接”）。
         // 视图先建、页对象以视图为父对象（setPage 不接管所有权，
         // 靠 QObject 父子关系随视图一起销毁）。
         auto *engView = new CDSWebEngineView(parent);
-        engView->setPage(new CDSWebEnginePage(QStringList{m_internalHostSuffix},
-                                             siteProfile(m_kind), engView));
+        engView->setPage(new CDSWebEnginePage(
+            QStringList{QString::fromUtf8(siteInfo(m_kind).internalHost)},
+            siteProfile(m_kind), engView));
         view = engView;
     } else {
         view = new QWebEngineView(webProfile(), parent);
@@ -358,6 +360,13 @@ QWidget *CDSWebViewWindow::createWebView(QWidget *parent)
                     m_renderRecoverTries = 0; // 加载成功：自动恢复次数清零
                 }
             });
+            // 注入“记录光标下链接”的钩子（右键菜单“使用默认浏览器打开链接”的兜底要用它）：
+            // 页面每次加载完成后都要重新注入（跳转会重置 JS 上下文），当前页面也立即注入一次。
+            const QString linkHook = QString::fromUtf8(kLinkHookScript);
+            connect(page, &QWebEnginePage::loadFinished, this, [page, linkHook](bool) {
+                page->runJavaScript(linkHook);
+            });
+            page->runJavaScript(linkHook);
         }
     }
 #endif

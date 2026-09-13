@@ -55,11 +55,11 @@ QString getExeDirByWinApi()
 //      （工作目录、plugins、qml、resources、translations 等）都设置到
 //      程序目录/Resource 下面；
 //   3) 若 Resource 不存在，则不设置（返回 false）。
-// 说明：直接调用的 dll（Qt6Core.dll 等）仍从 exe 所在目录（bin）加载，
+// 说明：直接调用的 dll（Qt6Core.dll 等）仍从 exe 所在目录（DSH-Environment-bin）加载，
 //       该目录不在此处改动。
 // 注意：plugins/qml/resources/translations 的查找路径不需要在此设置环境变量，
-//       部署时 bin 根目录的 qt.conf（[Paths] 段）会在 QApplication 构造时
-//       被 Qt 自动读取并指向 bin/Resource 下的对应目录；此处只负责
+//       部署时 exe 同目录的 qt.conf（[Paths] 段）会在 QApplication 构造时
+//       被 Qt 自动读取并指向同目录 Resource 下的对应目录；此处只负责
 //       Windows API 部分：程序目录获取、Resource 存在性判断、工作目录切换。
 bool setupResourceDirByWinApi()
 {
@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
     qInstallMessageHandler(messageHandler);
 
     // Qt WebEngine 的网页视图内部是 QQuickWidget（离屏渲染）。应用里同时存在多个网页视图
-    // （每个网页小程序窗口一个）时，必须在创建 QApplication 之前打开“共享 OpenGL 上下文”，
+    // （每个网页窗口一个）时，必须在创建 QApplication 之前打开“共享 OpenGL 上下文”，
     // 否则个别视图在隐藏/显示后渲染表面可能失效：切回标签时网页变成空白，且刷新也刷不出来
     // （页面内容还在，只是没有新的合成画面）。放在这里是因为该属性只能在 QApplication
     // 创建之前设置，之后再设无效。
@@ -238,19 +238,6 @@ int main(int argc, char *argv[])
                      [&window, cmdId](const QString &id) {
                          if (id == cmdId) {
                              window.openCmdView();
-                         }
-                     });
-
-    // “网页小程序”按钮：在“应用”页 MDI 中打开“网页小程序”表页
-    // （表页里可增加/修改/删除网页快捷方式，双击打开对应网页；重复点击只激活已存在的表页）
-    // 说明：原来的 DeepSeek / 今日头条 / GitHub-shgaol 三个按钮已移除，
-    //       这些站点改为在“网页小程序”里登记快捷方式打开（登录信息沿用 configure
-    //       下原有的 deepseek-web / toutiao-web / github-shgaol-web 目录，不用重新登录）。
-    const QString appletId = window.navigatorBar()->AddTopBtn(QStringLiteral("网页小程序"));
-    QObject::connect(window.navigatorBar(), &CUINavBar::topbtnClicked, &window,
-                     [&window, appletId](const QString &id) {
-                         if (id == appletId) {
-                             window.openWebApplets();
                          }
                      });
 

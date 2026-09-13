@@ -8,8 +8,8 @@ if(NOT CMAKE_PREFIX_PATH)
     set(CMAKE_PREFIX_PATH "Z:/QTSource/6.11.2/msvc2022_64")
 endif()
 
-# 需求10：生成的 exe 输出到工作目录下的 bin 目录
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin")
+# 需求10：生成的 exe（连同部署的 Qt 运行时）输出到工作目录下的 DSH-Environment-bin 目录
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/DSH-Environment-bin")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -60,14 +60,6 @@ add_executable(DSH-Environment WIN32
     DSWebEnginePage.cpp
     DSWebEngineView.h
     DSWebEngineView.cpp
-    WebApplet/DSWebAppletStore.h
-    WebApplet/DSWebAppletStore.cpp
-    WebApplet/DSWebAppletDlg.h
-    WebApplet/DSWebAppletDlg.cpp
-    WebApplet/DSWebAppletIconFetcher.h
-    WebApplet/DSWebAppletIconFetcher.cpp
-    WebApplet/DSWebAppletPage.h
-    WebApplet/DSWebAppletPage.cpp
     DSHChatWindow/DSHCommander.h
     DSHChatWindow/DSHCommander.cpp
     DSHChatWindow/DSHChatWindow.h
@@ -109,15 +101,15 @@ endif()
 
 # ============================================================
 # 需求10/11：部署 Qt 运行库（仅 Qt6，动态库场景）
-#   布局：
-#     bin/DSH-Environment.exe        生成的 exe（见上方 RUNTIME_OUTPUT_DIRECTORY）
-#     bin/Qt6*.dll 等                 直接调用的 Qt dll（与 exe 同目录，由系统加载）
-#     bin/QtWebEngineProcess.exe     WebEngine 辅助进程（必须与 Qt6WebEngineCore.dll
-#                                    同目录，否则加载失败导致程序退出，不能移入 Resource）
-#     bin/Resource/qml/              QML 模块（与直接调用的 dll 无关 → Resource 下）
-#     bin/Resource/resources/        WebEngine 数据（icudtl.dat、*.pak 等）
-#     bin/Resource/translations/     Qt 翻译 / WebEngine 语言包
-#     bin/Resource/plugins/          Qt 插件
+#   布局（exe 与 Qt 运行时都在 DSH-Environment-bin 目录下）：
+#     DSH-Environment-bin/DSH-Environment.exe      生成的 exe（见上方 RUNTIME_OUTPUT_DIRECTORY）
+#     DSH-Environment-bin/Qt6*.dll 等              直接调用的 Qt dll（与 exe 同目录，由系统加载）
+#     DSH-Environment-bin/QtWebEngineProcess.exe   WebEngine 辅助进程（必须与 Qt6WebEngineCore.dll
+#                                                  同目录，否则加载失败导致程序退出，不能移入 Resource）
+#     DSH-Environment-bin/Resource/qml/            QML 模块（与直接调用的 dll 无关 → Resource 下）
+#     DSH-Environment-bin/Resource/resources/      WebEngine 数据（icudtl.dat、*.pak 等）
+#     DSH-Environment-bin/Resource/translations/   Qt 翻译 / WebEngine 语言包
+#     DSH-Environment-bin/Resource/plugins/        Qt 插件
 #   说明：只拷贝程序正常运行需要的文件（windeployqt 按依赖分析拷贝）；
 #         qml/resources/translations/plugins 全部位于 Resource，
 #         启动时由 setupResourceDirByWinApi() 用环境变量指向这些目录。
@@ -136,11 +128,11 @@ if(WIN32 AND QT_VERSION_MAJOR EQUAL 6)
                     --plugindir "$<TARGET_FILE_DIR:DSH-Environment>/Resource/plugins"
                     --translationdir "$<TARGET_FILE_DIR:DSH-Environment>/Resource/translations"
                     "$<TARGET_FILE:DSH-Environment>"
-            # 把 windeployqt 仍放在 bin 根目录的 WebEngine 运行时文件整理进 Resource
+            # 把 windeployqt 仍放在 exe 根目录的 WebEngine 运行时文件整理进 Resource
             COMMAND ${CMAKE_COMMAND}
                     -DBIN_DIR="$<TARGET_FILE_DIR:DSH-Environment>"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/organize_resource.cmake"
-            COMMENT "windeployqt: Qt dll → bin，resources/translations/plugins → bin/Resource"
+            COMMENT "windeployqt: Qt dll → DSH-Environment-bin，resources/translations/plugins → DSH-Environment-bin/Resource"
         )
     endif()
 endif()

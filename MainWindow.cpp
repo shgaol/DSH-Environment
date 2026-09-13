@@ -5,13 +5,10 @@
 #include "DSWebViewWindow.h"
 #include "DSHChatWindow/DSHChatWindow.h"
 #include "DSCmdView.h"
-#include "WebApplet/DSWebAppletPage.h"
-#include "WebApplet/DSWebAppletStore.h" // 小程序图标（作为 MDI tab 图标的兜底）
 
 #include <QApplication>
 #include <QCloseEvent>
 #include <QEvent>
-#include <QFile>
 #include <QHBoxLayout>
 #include <QMdiArea>
 #include <QMdiSubWindow>
@@ -37,38 +34,6 @@ QIcon makeDIcon(const QColor &bg, int size)
 }
 
 namespace {
-// 兜底图标底色（与“网页小程序”表页里的字母图标同色）
-const QColor kAppletIconColor(0x25, 0x63, 0xEB);
-
-// 小程序窗口刚打开时的 tab 图标：
-//   1) 已保存过该网页的图标（webapplets/icons/<uuid>.png）→ 直接用它；
-//   2) 还没取到图标（或图标文件丢了）→ 用名称首字图标兜底，保证 tab 上一定有图标。
-// 之后网页自己的 favicon 解出来后（CDSWebViewWindow::faviconChanged）会替换成它，
-// 最终 tab 图标与网页图标一致。
-QIcon appletTabIcon(const QString &name, const QString &url)
-{
-    const QList<DSWebApplet> applets = CDSWebAppletStore::load();
-    for (const DSWebApplet &applet : applets) {
-        if (applet.name != name || applet.url != url) {
-            continue; // 名称与网址都一致才算同一个快捷方式
-        }
-        const QString path = CDSWebAppletStore::iconPath(applet.iconFile);
-        if (!path.isEmpty() && QFile::exists(path)) {
-            const QIcon icon(path);
-            if (!icon.isNull()) {
-                return icon;
-            }
-        }
-        break;
-    }
-
-    QString first = name.left(1);
-    if (first.isEmpty()) {
-        first = QStringLiteral("W"); // 名称异常为空时的兜底字（与表页一致）
-    }
-    return CUINavBarItem::makeLetterIcon(first.at(0), kAppletIconColor);
-}
-
 #ifdef DSH_HAVE_WEBENGINE
 // 让 root 里所有网页视图重新合成一帧。
 // 背景：QWebEngineView 内部是 QQuickWidget（离屏渲染到 FBO），而 QMdiArea 的 TabbedView
@@ -314,91 +279,6 @@ void MainWindow::openDshChatAt(const QString &address, const QString &tokenUrl, 
         if (m_webWindows.value(key) == sub)
             m_webWindows.remove(key);
     });
-    m_tabWidget->setCurrentWidget(m_appMdiArea);
-}
-
-void MainWindow::openWebApplets()
-{
-    // 表页标题固定为“网页小程序”，同时作为 MDI 去重标识：
-    // 已打开则激活，未打开才新建（表页里的数据来自 JSON，关闭再打开不会丢）
-    const QString key = QStringLiteral("网页小程序");
-    if (QMdiSubWindow *existing = m_webWindows.value(key, nullptr)) {
-        m_tabWidget->setCurrentWidget(m_appMdiArea);
-        m_appMdiArea->setActiveSubWindow(existing);
-        existing->show();
-        existing->raise();
-        return;
-    }
-
-    auto *page = new CDSWebAppletPage;
-    // 表页里双击小程序 → 在 MDI 中打开对应网页（按小程序名称去重）
-    connect(page, &CDSWebAppletPage::openRequested,
-            this, &MainWindow::openWebAppletWindow);
-    QMdiSubWindow *sub = m_appMdiArea->addSubWindow(page);
-    sub->setWindowTitle(key);
-    sub->setAttribute(Qt::WA_DeleteOnClose); // 关闭时真正销毁(触发 destroyed 清理映射)
-    sub->showMaximized();
-    m_webWindows.insert(key, sub);
-
-    connect(sub, &QObject::destroyed, this, [this, key, sub](QObject *) {
-        if (m_webWindows.value(key) == sub)
-            m_webWindows.remove(key);
-    });
-
-    m_tabWidget->setCurrentWidget(m_appMdiArea);
-}
-
-// 网页小程序窗口：在“应用”页 MDI 中打开小程序网址。
-// 行为与内置站点预设窗口（原来的 DeepSeek / 今日头条 / GitHub）完全一致：
-// - **profile（登录信息 + cache）按网址复用**：小程序网址若属于内置站点预设
-//   （deepseek.com / toutiao.com / github.com），就用该预设的类型与 profile ——
-//   与原来侧边栏按钮打开的窗口是同一份数据（configure/deepseek-web 等），因此不用重新登录；
-//   其它网址用网页小程序自己的 profile（configure/webapplet-web）；
-// - 数据都落在「文档/DSH-Environment/configure」下、与 Edge 隔离，
-//   窗口内「登录数据」按钮可直达该目录；
-// - 站内链接（小程序自己的站点，如 chat.deepseek.com → deepseek.com）在窗口内导航，
-//   站外链接交给外部浏览器（Edge）打开，右键菜单也有“使用默认浏览器打开链接”；
-// - MDI 标题用小程序名称（不跟随网址），按小程序名称去重，重复双击只激活已打开的窗口。
-void MainWindow::openWebAppletWindow(const QString &name, const QString &url)
-{
-    const QString key = QStringLiteral("小程序: ") + name;
-    if (QMdiSubWindow *existing = m_webWindows.value(key, nullptr)) {
-        m_tabWidget->setCurrentWidget(m_appMdiArea);
-        m_appMdiArea->setActiveSubWindow(existing);
-        existing->show();
-        existing->raise();
-        return;
-    }
-
-    // 网址属于内置站点（DeepSeek / 今日头条 / GitHub）→ 复用该站点类型：
-    // profile 与侧边栏按钮打开的窗口完全相同，登录状态直接沿用，不必再登录一次。
-    const CDSWebProfileKind kind = CDSWebViewWindow::kindForUrl(url);
-    // 第三个参数：本窗口的“站内域名后缀”（由小程序网址推出），
-    // 与内置站点预设里 DeepSeek 用 deepseek.com、今日头条用 toutiao.com 同理
-    auto *view = new CDSWebViewWindow(kind, nullptr, CDSWebAppletPage::siteHostSuffix(url));
-    QMdiSubWindow *sub = m_appMdiArea->addSubWindow(view);
-    sub->setWindowTitle(name); // 表页里的快捷方式名称
-    // tab 图标：先放“已保存的网页图标 / 名称首字兜底图标”，保证 tab 上立刻有图标；
-    // 网页自己的 favicon 解出来后（下面的 faviconChanged）替换成它 —— 最终 tab 图标与网页图标一致。
-    const QIcon fallbackIcon = appletTabIcon(name, url);
-    sub->setWindowIcon(fallbackIcon);
-    connect(view, &CDSWebViewWindow::faviconChanged, sub, [sub, fallbackIcon](const QIcon &icon) {
-        if (icon.cacheKey() == fallbackIcon.cacheKey()) {
-            return; // 与当前图标相同：不必重复刷新 tab
-        }
-        sub->setWindowIcon(icon);
-    });
-    sub->setAttribute(Qt::WA_DeleteOnClose); // 关闭时真正销毁(触发 destroyed 清理映射)
-    // 注意：不连接 urlChanged 改标题——小程序窗口标题保持快捷方式名称，不跟随网址。
-    view->openUrl(url);
-    sub->showMaximized();
-    m_webWindows.insert(key, sub);
-
-    connect(sub, &QObject::destroyed, this, [this, key, sub](QObject *) {
-        if (m_webWindows.value(key) == sub)
-            m_webWindows.remove(key);
-    });
-
     m_tabWidget->setCurrentWidget(m_appMdiArea);
 }
 
